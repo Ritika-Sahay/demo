@@ -10,7 +10,7 @@
 const AWS = require('aws-sdk');
 
 const cognitoIdentityServiceProvider = new AWS.CognitoIdentityServiceProvider({
-    region: process.env.region // This uses the specified region or defaults to what's set in the AWS configuration
+    region: process.env.region
 });
 
 async function loginUser(email, password, userPoolId, clientId) {
@@ -28,9 +28,9 @@ async function loginUser(email, password, userPoolId, clientId) {
         const data = await cognitoIdentityServiceProvider.adminInitiateAuth(params).promise();
         const idToken = data.AuthenticationResult.IdToken;
         return {
-            statusCode: 200,
+            statusCode: 201,  // ✅ Changed from 200 to 201
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ idToken: idToken })
+            body: JSON.stringify({ idToken })
         };
     } catch (error) {
         console.error(error);
@@ -51,15 +51,15 @@ async function signUpUser(email, password, userPoolId, clientId) {
     };
 
     try {
-        const data = await cognitoIdentityServiceProvider.signUp(params).promise();
+        await cognitoIdentityServiceProvider.signUp(params).promise();
         const confirmParams = {
             Username: email,
             UserPoolId: userPoolId
         };
 
-        const confirmedResult = await cognitoIdentityServiceProvider.adminConfirmSignUp(confirmParams).promise();
+        await cognitoIdentityServiceProvider.adminConfirmSignUp(confirmParams).promise();
         return {
-            statusCode: 200,
+            statusCode: 201,  // ✅ Changed from 200 to 201
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ message: 'OK' })
         };
@@ -75,20 +75,29 @@ async function signUpUser(email, password, userPoolId, clientId) {
 
 exports.handler = async (event) => {
     console.log(event);
-    const body = JSON.parse(event.body);
-    const userPoolId = process.env.CUPId;
-    const clientId = process.env.CUPClientId;
+    
+    try {
+        const body = JSON.parse(event.body);
+        const userPoolId = process.env.CUPId;
+        const clientId = process.env.CUPClientId;
 
-    if (event.resource === '/login') {
-        return loginUser(body.email, body.password, userPoolId, clientId);
-    } else if (event.resource === '/signup') {
-        return signUpUser(body.email, body.password, userPoolId, clientId);
-    } else {
-        // Handle unexpected resource paths
+        if (event.resource === '/login') {
+            return await loginUser(body.email, body.password, userPoolId, clientId);
+        } else if (event.resource === '/signup') {
+            return await signUpUser(body.email, body.password, userPoolId, clientId);
+        } else {
+            return {
+                statusCode: 400,
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ error: "Invalid resource path" })
+            };
+        }
+    } catch (error) {
+        console.error(error);
         return {
-            statusCode: 400,
+            statusCode: 500,
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ error: "Invalid resource path" })
+            body: JSON.stringify({ error: "Internal Server Error", details: error.message })
         };
     }
 };
