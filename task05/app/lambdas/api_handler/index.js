@@ -1,103 +1,66 @@
-// exports.handler = async (event) => {
-//     // TODO implement
-//     const response = {
-//         statusCode: 200,
-//         body: JSON.stringify('Hello from Lambda!'),
-//     };
-//     return response;
-// };
+import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
+import { PutCommand } from "@aws-sdk/lib-dynamodb";
+import { v4 as uuidv4 } from "uuid";
 
-const AWS = require('aws-sdk');
+const dynamoDBClient = new DynamoDBClient();
+const TABLE_NAME = process.env.TABLE_NAME || "Events";
 
-const cognitoIdentityServiceProvider = new AWS.CognitoIdentityServiceProvider({
-    region: process.env.region
-});
-
-async function loginUser(email, password, userPoolId, clientId) {
-    const params = {
-        AuthFlow: 'ADMIN_USER_PASSWORD_AUTH',
-        UserPoolId: userPoolId,
-        ClientId: clientId,
-        AuthParameters: {
-            USERNAME: email,
-            PASSWORD: password
-        }
-    };
-
+export const handler = async (event) => {
     try {
-        const data = await cognitoIdentityServiceProvider.adminInitiateAuth(params).promise();
-        const idToken = data.AuthenticationResult.IdToken;
-        return {
-            statusCode: 201,  // ✅ Changed from 200 to 201
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ idToken })
-        };
-    } catch (error) {
-        console.error(error);
-        return {
-            statusCode: 500,
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ error: "Authentication failed", details: error.message })
-        };
-    }
-}
+        console.log("Received event:", JSON.stringify(event, null, 2));
 
-async function signUpUser(email, password, userPoolId, clientId) {
-    const params = {
-        ClientId: clientId,
-        Username: email,
-        Password: password,
-        UserAttributes: [{ Name: 'email', Value: email }]
-    };
-
-    try {
-        await cognitoIdentityServiceProvider.signUp(params).promise();
-        const confirmParams = {
-            Username: email,
-            UserPoolId: userPoolId
-        };
-
-        await cognitoIdentityServiceProvider.adminConfirmSignUp(confirmParams).promise();
-        return {
-            statusCode: 201,  // ✅ Changed from 200 to 201
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ message: 'OK' })
-        };
-    } catch (error) {
-        console.error(error);
-        return {
-            statusCode: 500,
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ error: "Signing up failed", details: error.message })
-        };
-    }
-}
-
-exports.handler = async (event) => {
-    console.log(event);
-    
-    try {
-        const body = JSON.parse(event.body);
-        const userPoolId = process.env.CUPId;
-        const clientId = process.env.CUPClientId;
-
-        if (event.resource === '/login') {
-            return await loginUser(body.email, body.password, userPoolId, clientId);
-        } else if (event.resource === '/signup') {
-            return await signUpUser(body.email, body.password, userPoolId, clientId);
-        } else {
+        let inputEvent;
+        try {
+            inputEvent = typeof event.body === "string" ? JSON.parse(event.body) : event.body;
+        } catch (parseError) {
+            console.error("Error parsing event body:", parseError);
             return {
                 statusCode: 400,
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ error: "Invalid resource path" })
+                body: JSON.stringify({ message: "Invalid JSON format in request body" })
             };
         }
+
+        if (!inputEvent?.principalId || inputEvent?.content === undefined) {
+            console.error("Validation failed: Missing required fields", inputEvent);
+            return {
+                statusCode: 400,
+                body: JSON.stringify({ message: "Invalid input: principalId and content are required" })
+            };
+        }
+
+        const eventId = uuidv4();
+        const createdAt = new Date().toISOString();
+
+        const eventItem = {
+            id: eventId,
+            principalId: Number(inputEvent.principalId),
+            createdAt,
+            body: inputEvent.content
+        };
+
+        console.log("Saving to DynamoDB:", JSON.stringify(eventItem, null, 2));
+
+        const response = await dynamoDBClient.send(new PutCommand({
+            TableName: TABLE_NAME,
+            Item: eventItem,
+        }));
+        console.log("Saved successfully");
+
+        console.log("DynamoDB Response:", response);
+
+        const responseObject = {
+            statusCode: 201,
+            body: JSON.stringify({statusCode : 201, event : eventItem})
+        };
+
+        console.log("Final response:", JSON.stringify(responseObject, null, 2));
+        return responseObject;
+
     } catch (error) {
-        console.error(error);
+        console.error("Error processing request:", error);
         return {
             statusCode: 500,
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ error: "Internal Server Error", details: error.message })
+            body: JSON.stringify({ message: "Internal server error", error: error.message })
         };
     }
 };
